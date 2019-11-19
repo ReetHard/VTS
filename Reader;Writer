@@ -1,0 +1,182 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+# include <sys/types.h>
+# include <sys/ipc.h>
+# include <sys/sem.h>
+#include <stdbool.h>
+
+/* FINAL VERSION OF READER WRITER */
+#define NUMBER_OF_PROCESSES	7
+
+key_t sem_key;
+key_t sem_key1;
+key_t sem_key2;
+int writer;
+int reader; // shared memory counter
+int mutex;
+
+
+
+void V(int sem_id,int sem_num) {
+  struct sembuf semaphore;
+
+  semaphore.sem_num=sem_num;
+  semaphore.sem_op=1;
+  semaphore.sem_flg=~(IPC_NOWAIT|SEM_UNDO);
+  if(semop(sem_id,&semaphore,1)){
+    perror("Error in semop V()");
+    exit(1);
+  }
+}
+
+void P(int sem_id,int sem_num) {
+  struct sembuf semaphore;
+
+  semaphore.sem_num=sem_num;
+  semaphore.sem_op=-1;
+  semaphore.sem_flg=~(IPC_NOWAIT|SEM_UNDO);
+  if(semop(sem_id,&semaphore,1)){
+    perror("Error in semop P()");
+    exit(1);
+  }
+}
+
+void init_sem(int sem_id,int sem_num,int val) {
+  union semnum {
+    int val;
+    struct semid_ds *buf;
+    unsigned short *array;
+  }argument;
+  argument.val=val;
+
+  if(semctl(sem_id,sem_num,SETVAL,argument)<0){
+    perror("Error in semctl");
+    exit(1);
+  }
+}
+
+void read(int p){
+
+P(mutex,0);
+semctl(reader,0,SETVAL,semctl(reader,0,GETVAL)+1);
+//printf("%d Value of Writer :%d\n",p,semctl(writer,0,GETVAL));
+//printf("%d Value of Mutex:%d\n",p,semctl(mutex,0,GETVAL));
+
+printf("Reader %d is ready to read !!!\n",p);
+if(semctl(reader,0,GETVAL) == 1){
+P(writer,0);
+}
+
+V(mutex,0);
+
+printf("Reader %d is reading Current: %d\n",p,semctl(reader,0,GETVAL));
+//printf("Mutex %d \n",semctl(mutex,0,GETVAL));
+sleep(1);
+
+P(mutex,0);
+//printf("test mutex\n");
+semctl(reader,0,SETVAL,semctl(reader,0,GETVAL)-1);
+if (semctl(reader,0,GETVAL) == 0){
+    V(writer,0);
+}
+V(mutex,0);
+printf("Reader %d stopped reading\n",p);
+sleep(1);
+
+
+
+
+}
+
+
+void write(int p){
+
+P(writer,0);
+printf("Writer %d is working\n",p);
+sleep(1);
+V(writer,0);
+printf("Writer %d stopped working\n",p);
+sleep(1);
+}
+
+
+main(){
+
+  int process;		
+
+  if ((sem_key = ftok ("/home",'1'))<0){
+    perror("Error in ftok");
+    exit(1);
+  }
+
+  if ((sem_key1 = ftok ("/home/lars",'1'))<0){
+    perror("Error in ftok");
+    exit(1);
+  }
+
+  if ((sem_key2 = ftok ("/home/lars/Downloads",'1'))<0){
+    perror("Error in ftok");
+    exit(1);
+  }
+
+
+  if ((writer = semget( sem_key,1, IPC_CREAT|0666))<0){	/* only one sem needed */
+    perror("Error in semget");
+    exit(1);
+  }
+
+  if ((reader = semget( sem_key2,1, IPC_CREAT|0666))<0){	
+    perror("Error in semget");
+    exit(1);
+  }
+
+  if ((mutex = semget( sem_key1,1, IPC_CREAT|0666))<0){	/* only one sem needed */
+    perror("Error in semget");
+    exit(1);
+  }
+
+/* init sem with one, so first process will not be blocked */
+    init_sem( mutex, 0, 1);	/* init sem with one, so first process will not be blocked */
+    init_sem( reader, 0, 0);	/* init sem with one, so first process will not be blocked */
+    init_sem( writer, 0, 1);	
+
+
+// TESTING
+printf("Key 1: %d Key2: %d\n",sem_key,sem_key1);
+
+
+  for(process=0; process< NUMBER_OF_PROCESSES; process++) {
+    switch(fork()) {
+      case -1:	perror("FORK failed");
+    		break;
+    
+      case 0:	/*child*/
+      
+  if (process==0 || process ==1){  		
+    printf("Writer %d (%d) started\n", process, getpid());
+      sleep(5);
+    for (int loop=0;loop<3;loop++){
+    write(process);
+    }    
+     
+    }else{
+  
+    printf("Reader %d (%d) started\n", process, getpid());
+      sleep(5);  
+  for (int loop=0;loop<3;loop++){
+    read(process);
+    }
+}
+    
+  
+  		exit(0);
+    
+      default:	/*father*/
+  				;
+    }
+  }
+  
+  printf("Father process stopped");
+	
+}
